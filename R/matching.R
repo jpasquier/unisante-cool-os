@@ -45,6 +45,9 @@ bps$bmi <- ggplot(tmp, aes(x = factor(grp), y = bmi)) +
   geom_boxplot() + labs(title = "BMI", x = "")
 rm(tmp)
 
+# Sélection des personnes ayant plus de 55 ans
+data <- data[data$age >= 55, ]
+
 # Matching
 mlist <- lapply(c(cs0 = 1, cs1 = 2, md = 3), function(l) {
   lapply(c(r11 = 1, r21 = 2, r31 = 3), function(r) {
@@ -93,7 +96,7 @@ ctrl_ids <- unique(ctrl_ids)
 length(ctrl_ids)
 
 # Export results - Summaries, matrices and matching plots
-mdir <- "results/matching_20210511"
+mdir <- "results/matching_20210607"
 if (!dir.exists(mdir)) dir.create(mdir, recursive = TRUE)
 for (s in names(mlist)) {
   for (r in names(mlist[[s]])) {
