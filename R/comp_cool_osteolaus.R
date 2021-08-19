@@ -1,6 +1,4 @@
 library(ggplot2)
-library(mice)
-library(miceadds)
 library(pander)
 library(parallel)
 library(readxl)
@@ -8,14 +6,11 @@ library(writexl)
 
 options(mc.cores = detectCores())
 
-source("https://raw.githubusercontent.com/stamats/MKmisc/master/R/mi.t.test.R")
-
-
 # Set working directory
 setwd("~/Projects/Consultations/Favre Lucie (COOL-OS)")
 
 # Output directory
-outdir <- "results/comp_cool_osteolaus_20210720"
+outdir <- "results/comp_cool_osteolaus_20210819"
 if (!dir.exists(outdir)) dir.create(outdir)
 
 # Import data
@@ -36,47 +31,40 @@ for (j in which(sapply(dta, class) == "numeric")) {
   }
 }
 
-# Imputed data
-imp <- parlmice(dta, maxit = 30, cluster.seed = 666, n.core = 16,
-                n.imp.core = 2)
-pdf(file.path(outdir, "imputations_diagnostic_plots.pdf"))
-print(plot(imp))
-dev.off()
-imp_list <- lapply(1:imp$m, function(i) complete(imp, i))
-imp_list <- lapply(1:imp$m, function(i) {
-  z <- complete(imp, i)
-  z$Cohort <- factor(z$Cohort)
-  z$femurTot_Tscore <- predict(lm(femurTot_Tscore ~ femurTot_DMO, dta), z)
-  z$col_Tscore <- predict(lm(col_Tscore ~ col_DMO, dta), z)
-  z
-})
+# Import matching matrix
+tarfile <- "results/matching_20210607.txz"
+csvfile <- "matching_20210607/matching_matrix_md_r11.csv"
+exdir <- paste0("tmp-", round(runif(1) * 10^6))
+untar(tarfile, csvfile, exdir = exdir)
+mm <- read.csv(file.path(exdir, csvfile), sep = ";")
+unlink(exdir, recursive = TRUE)
+
+# Help funtion - identifiy paired data which are complete for a given variable
+ids <- function(x) {
+  id_exp <- dta[!is.na(dta[[x]]) & dta$Cohort == "COOL", "Subject_ID"]
+  id_ctrl <- dta[!is.na(dta[[x]]) & dta$Cohort == "OsteoLaus", "Subject_ID"]
+  i <- mm$id_exp %in% id_exp & mm$id_ctrl1 %in% id_ctrl
+  c(mm$id_exp[i], mm$id_ctrl1[i])
+}
+
+# Subgroup DX_BMi <= 37 (COOL) for L1L4sTBS
+dta$L1L4sTBS_BMI.le.37 <- ifelse(
+  dta$Cohort == "OsteoLaus" | dta$DX_BMI <= 37, dta$L1L4sTBS, NA)
 
 # Comparison of the numeric variables - Table
 X <- names(dta)[sapply(dta, class) == "numeric"]
 tab_num <- do.call(rbind, mclapply(X, function(x) {
+  dta <- dta[dta$Subject_ID %in% ids(x), ]
+  n <- nrow(dta) / 2
   m <- do.call(cbind, lapply(c("COOL", "OsteoLaus"), function(g) {
     u <- dta[dta$Cohort == g, x]
-    n <- sum(!is.na(u))
-    u <- u[!is.na(u)]
-    r <- data.frame(n = n, mean = mean(u), SD = sd(u))
+    r <- data.frame(mean = mean(u), SD = sd(u))
     names(r) <- paste0(names(r), " (", g, ")")
     return(r)
   }))
   pv <- t.test(as.formula(paste(x, "~ Cohort")), dta)$p.value
   m <- cbind(m, `t-test p-value` = pv)
-  #M_imp <- t(sapply(c("COOL", "OsteoLaus"), function(g) {
-  #  n <- sum(dta$Cohort == g)
-  #  se <- sapply(imp_list, function(d) sd(d[d$Cohort == g, x]) / sqrt(n))
-  #  m <- sapply(imp_list, function(d) mean(d[d$Cohort == g, x]))
-  #  se <- sqrt(mean(se^2) + (1 + 1 / length(m)) * var(m))
-  #  m <- mean(m)
-  #  c(n = n, m = m, s = se * sqrt(n), se = se)
-  #}))
-  m_imp <- mi.t.test(imp_list, x = x, y = "Cohort")
-  m_imp <- as.data.frame(t(c(m_imp$estimate,
-                             `t-test p-value` = m_imp$p.value)))
-  names(m_imp) <- paste(names(m_imp), "(imp)")
-  cbind(variable = x, m, m_imp)
+  cbind(variable = x, n = n, m)
 }))
 rm(X)
 write_xlsx(tab_num, file.path(outdir, "comparisons_numeric_variables.xlsx"))
@@ -84,9 +72,10 @@ write_xlsx(tab_num, file.path(outdir, "comparisons_numeric_variables.xlsx"))
 # Comparison of the numeric variables - Figures
 pdf(file.path(outdir, "comparisons_numeric_variables.pdf"))
 for (x in names(dta)[sapply(dta, class) == "numeric"]) {
-  p <- ggplot(na.omit(dta[c(x, "Cohort")]), aes_string(x = "Cohort", y = x)) +
+  subdta <- dta[dta$Subject_ID %in% ids(x), ]
+  p <- ggplot(subdta[c(x, "Cohort")], aes_string(x = "Cohort", y = x)) +
     geom_boxplot() +
-    labs(x = "")
+    labs(x = "", caption = paste("n (per group):", nrow(subdta)))
   print(p)
 }
 dev.off()
@@ -95,11 +84,11 @@ rm(p, x)
 # Comparison of the binary variables
 X <- names(dta)[sapply(dta, class) == "logical"]
 tab_bin <- do.call(rbind, mclapply(X, function(x) {
+  dta <- dta[dta$Subject_ID %in% ids(x), ]
+  n <- nrow(dta) / 2
   m <- do.call(cbind, lapply(c("COOL", "OsteoLaus"), function(g) {
     u <- dta[dta$Cohort == g, x]
-    n <- sum(!is.na(u))
-    u <- u[!is.na(u)]
-    r <- data.frame(n = n, npos = sum(u), prop = mean(u))
+    r <- data.frame(npos = sum(u), prop = mean(u))
     names(r) <- paste0(names(r), " (", g, ")")
     return(r)
   }))
@@ -109,35 +98,8 @@ tab_bin <- do.call(rbind, mclapply(X, function(x) {
   w <- paste(r$msg$warnings, collapse = "; ")
   e <- paste(r$msg$errors, collapse = "; ")
   pv2 <- fisher.test(dta[[x]], dta$Cohort)$p.value
-  m <- cbind(m, `χ² test p-value` = pv, `χ² test warning` = w,
-             `χ² test error` = e, `Fisher test p-value` = pv2)
-  m_imp <- do.call(cbind, lapply(c("COOL", "OsteoLaus"), function(g) {
-    npos <- mean(sapply(imp_list, function(d) sum(d[d$Cohort == g, x])))
-    prop <- npos / sum(dta$Cohort == g)
-    r <- data.frame(npos = npos, prop = prop)
-    names(r) <- paste0(names(r), " (", g, ")")
-    return(r)
-  }))
-  chi2_imp <- do.call(rbind, lapply(1:imp$m, function(k) {
-    d <- complete(imp, k)
-    r <- evals("chisq.test(d[[x]], d$Cohort)", env = environment(),
-               graph.dir = "/tmp/r_pander_graph_dir")[[1]]
-    chi2 <- r$result
-    w <- paste(r$msg$warnings, collapse = "; ")
-    e <- paste(r$msg$errors, collapse = "; ")
-    data.frame(X.squared = chi2$statistic, df = chi2$parameter,
-               warning = w, error = e)
-  }))
-  chi2_imp_wrn <- paste0(unique(chi2_imp$warning), collapse = "; ")
-  chi2_imp_err <- paste0(unique(chi2_imp$error), collapse = "; ")
-  chi2_imp_pvl <- micombine.chisquare(
-    dk = chi2_imp$X.squared, df = chi2_imp$df[1], display = F
-  )[["p"]]
-  m_imp <- cbind(m_imp, `χ² test p-value` = chi2_imp_pvl,
-                 `χ² test warning` = chi2_imp_wrn,
-                 `χ² test error` = chi2_imp_err)
-  names(m_imp) <- paste(names(m_imp), "(imp)")
-  cbind(variable = x, m, m_imp)
+  cbind(variable = x, n = n, m, `χ² test p-value` = pv, `χ² test warning` = w,
+        `χ² test error` = e, `Fisher test p-value` = pv2)
 }))
 rm(X)
 tab_bin <- tab_bin[, apply(tab_bin != "", 2, any)]
