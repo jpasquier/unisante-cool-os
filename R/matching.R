@@ -24,16 +24,16 @@ options(width = 120)
 setwd("~/Projects/Consultations/Favre Lucie (COOL-OS)")
 
 # Data
-fileName <- "data-raw/Fichier Matching pour J Pasquier.xls"
-osteolaus <- read_xls(fileName, sheet = "osteoLaus")
-cool <- read_xls(fileName, sheet = "COOL")
+osteolaus <- read_xls("data-raw/Controls (OsteoLaus) for Matching.xls",
+                      sheet = "selection")
+cool <- read_xlsx("data-raw/Cases (COOL) for Matching.xlsx")
 cool$DX_age <- as.numeric(cool$DX_age)
-cool$`BMI (kg/m^2)` <- as.numeric(cool$`BMI (kg/m^2)`)
+cool$`DX_BMI***` <- as.numeric(cool$`DX_BMI***`)
 coln <- c("id", "age", "bmi")
 data <- rbind(cbind(grp = 0, setNames(osteolaus, coln)),
               cbind(grp = 1, setNames(cool, coln)))
 if (any(is.na(data))) stop("missing values")
-rm(fileName, osteolaus, cool, coln)
+rm(osteolaus, cool, coln)
 
 # Apperçu des données
 tmp <- data
@@ -96,7 +96,7 @@ ctrl_ids <- unique(ctrl_ids)
 length(ctrl_ids)
 
 # Export results - Summaries, matrices and matching plots
-mdir <- "results/matching_20210607"
+mdir <- paste0("results/matching_", format(Sys.time(), "%Y%m%d"))
 if (!dir.exists(mdir)) dir.create(mdir, recursive = TRUE)
 for (s in names(mlist)) {
   for (r in names(mlist[[s]])) {
