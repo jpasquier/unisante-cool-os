@@ -11,11 +11,11 @@ options(mc.cores = detectCores())
 setwd("~/Projects/Consultations/Favre Lucie (COOL-OS)")
 
 # Output directory
-outdir <- "results/analyses_cool_only_20210819"
+outdir <- paste0("results/analyses_cool_only_", format(Sys.Date(), "%Y%m%d"))
 if (!dir.exists(outdir)) dir.create(outdir)
 
 # Import data
-dta <- read_xlsx("data-raw/1. Final for stat COOL DEXA VAT 20210715.xlsx")
+dta <- read_xlsx("data-raw/COOL DEXA_DO_2022_20221130_for_stat.xlsx")
 dta <- as.data.frame(dta)
 names(dta) <- sub("^1", "One", gsub("-", "", gsub(" ", "_", names(dta))))
 
@@ -31,21 +31,14 @@ dta$Time_postop <- as.numeric(sub("Y$", "", sub("_", ".", dta$Time_postop)))
 Y <- c("L1L4s_BMD", "femurTot_DMO", "col_DMO", "L1L4sTBS")
 X <- c("BS_Age", "PO_BMI", "DX_age", "DX_BMI", "Time_postop", "deltaWeight",
        "OneY_TWL", "OneY_EBMIL", "ALMI", "FMI", "VitD1", "PTH", "P1NP",
-       "Bcrosslaps", "glyc", "HOMA", "HbA1c", "VAT")
+       "Bcrosslaps", "VAT")
 
 # Plots
 pdf(file.path(outdir, "distributions.pdf"))
 par(mfrow = c(2, 2))
 for (v in c(Y, X)) {
-  if (v == "L1L4sTBS") {
-    dta1 <- subset(dta, DX_BMI <= 37)
-    sttl <- "Only patients with DX_BMI <= 27"
-  } else {
-    dta1 <- dta
-    sttl <- NULL
-  }
-  hist(dta1[[v]], main = paste("Histogram of", v), sub = sttl, xlab = v)
-  boxplot(dta1[[v]], main = paste("Boxplot of", v), sub = sttl)
+  hist(dta[[v]], main = paste("Histogram of", v), xlab = v)
+  boxplot(dta[[v]], main = paste("Boxplot of", v))
 }
 par(mfrow = c(1, 1))
 dev.off()
@@ -53,12 +46,10 @@ rm(v)
 
 # Univariate regressions - figures
 figs_unireg <- mclapply(setNames(Y, Y), function(y) {
-  if (y == "L1L4sTBS") {
-    dta <- subset(dta, DX_BMI <= 37)
-  }
-  dta$HOMA_no_ex <- ifelse(dta$HOMA > 10, NA, dta$HOMA)
-  J <- length(X)
-  X2 <- c(X, "HOMA_no_ex")[c(1:(J - 1), J + 1, J)]
+  # dta$HOMA_no_ex <- ifelse(dta$HOMA > 10, NA, dta$HOMA)
+  # J <- length(X)
+  # X2 <- c(X, "HOMA_no_ex")[c(1:(J - 1), J + 1, J)]
+  X2 <- X
   figs <- mclapply(setNames(X2, X2), function(x) {
     fml <- as.formula(paste(y, "~", x))
     fit <- lm(fml, dta)
@@ -87,9 +78,6 @@ rm(figs)
 
 # Univariable regressions - tables
 uni_reg_tbl <- mclapply(setNames(Y,Y), function(y) {
-  if (y == "L1L4sTBS") {
-    dta <- subset(dta, DX_BMI <= 37)
-  }
   tab <- do.call(rbind, mclapply(X, function(x) {
     fml <- paste(y, "~", x)
     fit <- lm(as.formula(fml), dta)
@@ -115,9 +103,6 @@ multi_reg_tbl <- mclapply(1:3, function(k) {
     X <- X[X != "OneY_TWL"]
   }
   tabs <- mclapply(setNames(Y,Y), function(y) {
-    if (y == "L1L4sTBS") {
-      dta <- subset(dta, DX_BMI <= 37)
-    }
     fml <- paste(y, "~", paste(X, collapse = " + "))
     fit <- do.call("lm", list(formula = as.formula(fml), data = quote(dta)))
     tab <- cbind(coef(fit), confint(fit), coef(summary(fit))[, 4])
@@ -154,9 +139,6 @@ rm(f, tabs)
 
 # Comparison of the tertiles
 cmp_tert <- mclapply(setNames(Y, Y), function(y) {
-  if (y == "L1L4sTBS") {
-    dta <- subset(dta, DX_BMI <= 37)
-  }
   dta <- dta[!is.na(dta[[y]]), ]
   quantile(dta[[y]], (0:3) / 3)
   dta$tert <- cut(dta[[y]], quantile(dta[[y]], (0:3) / 3),
@@ -177,9 +159,6 @@ write_xlsx(cmp_tert, file.path(outdir, "comparison_tertiles.xlsx"))
 
 # Comparison of the tertiles - Plots
 cmp_tert_figs <- mclapply(setNames(Y, Y), function(y) {
-  if (y == "L1L4sTBS") {
-    dta <- subset(dta, DX_BMI <= 37)
-  }
   dta <- dta[!is.na(dta[[y]]), ]
   quantile(dta[[y]], (0:3) / 3)
   dta$tert <- cut(dta[[y]], quantile(dta[[y]], (0:3) / 3),

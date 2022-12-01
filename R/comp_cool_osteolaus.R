@@ -10,46 +10,65 @@ options(mc.cores = detectCores())
 setwd("~/Projects/Consultations/Favre Lucie (COOL-OS)")
 
 # Output directory
-outdir <- "results/comp_cool_osteolaus_20210819"
+outdir <- paste0("results/comp_cool_osteolaus_", format(Sys.Date(), "%Y%m%d"))
 if (!dir.exists(outdir)) dir.create(outdir)
 
 # Import data
-dta <- read_xlsx("data-raw/COOL_OsteoLaus_47n2Matcheddata.xlsx")
-dta <- as.data.frame(dta)
-names(dta) <- gsub("-", "", gsub(" ", "_", names(dta)))
+dta <- c(
+  cool = "data-raw/COOL DEXA_DO_2022_20221130_for_stat.xlsx",
+  osteolaus = "data-raw/OsteoLaus (Controls)_2022_20221130_for_stat.xls"
+)
+dta <- lapply(dta, read_excel)
+
+# Rename variables
+dta <- lapply(dta, function(d) {
+  names(d) <- gsub("-", "", gsub(" ", "_", names(d)))
+  d
+})
+
+# Keep only matched observation
+dta$cool <- dta$cool[dta$cool$DOF50Ymatch %in% "true", ]
+
+# Keep only common variables
+v <- lapply(dta, names)
+v <- intersect(v[[1]], v[[2]])
+dta <- lapply(dta, function(d) d[v])
 
 # Recoding
-for (j in which(sapply(dta, class) == "character")) {
-  if (all(grepl("^(-)?[0-9]+(\\.[0-9]+)?(E(-)?[0-9]+)?$", dta[[j]]) | 
-            is.na(dta[[j]]))) {
-    dta[[j]] <- as.numeric(dta[[j]])
+dta <- lapply(dta, function(d) {
+  for (j in which(sapply(d, class) == "character")) {
+    if (all(grepl("^(-)?[0-9]+(\\.[0-9]+)?(E(-)?[0-9]+)?$", d[[j]]) |
+              is.na(d[[j]]))) {
+      d[[j]] <- as.numeric(d[[j]])
+    }
   }
-}
-for (j in which(sapply(dta, class) == "numeric")) {
-  if (all(dta[[j]] %in% 0:1 | is.na(dta[[j]]))) {
-    dta[[j]] <- as.logical(dta[[j]])
+  for (j in which(sapply(d, class) == "numeric")) {
+    if (all(d[[j]] %in% 0:1 | is.na(d[[j]]))) {
+      d[[j]] <- as.logical(d[[j]])
+    }
   }
-}
+  d
+})
 
-# Import matching matrix
-tarfile <- "results/matching_20210607.txz"
-csvfile <- "matching_20210607/matching_matrix_md_r11.csv"
+# Bind dataframes
+dta <- rbind(cbind(dta$cool, Cohort = "COOL"),
+             cbind(dta$osteolaus, Cohort = "OsteoLaus"))
+
+# Import matching data
+tarfile <- "results/matching_20220720.txz"
+xlsxfile <- "matching_20220720/match_data.xlsx"
 exdir <- paste0("tmp-", round(runif(1) * 10^6))
-untar(tarfile, csvfile, exdir = exdir)
-mm <- read.csv(file.path(exdir, csvfile), sep = ";")
+untar(tarfile, xlsxfile, exdir = exdir)
+md <- read_xlsx(file.path(exdir, xlsxfile))
 unlink(exdir, recursive = TRUE)
 
 # Help funtion - identifiy paired data which are complete for a given variable
 ids <- function(x) {
-  id_exp <- dta[!is.na(dta[[x]]) & dta$Cohort == "COOL", "Subject_ID"]
-  id_ctrl <- dta[!is.na(dta[[x]]) & dta$Cohort == "OsteoLaus", "Subject_ID"]
-  i <- mm$id_exp %in% id_exp & mm$id_ctrl1 %in% id_ctrl
-  c(mm$id_exp[i], mm$id_ctrl1[i])
+  d <- md[md$id %in% dta$Subject_ID[!is.na(dta[[x]])], ]
+  d <- aggregate(id ~ subclass, d, function(z) length(unique(z)))
+  s <- d$subclass[d$id == 2]
+  md$id[md$subclass %in% s]
 }
-
-# Subgroup DX_BMi <= 37 (COOL) for L1L4sTBS
-dta$L1L4sTBS_BMI.le.37 <- ifelse(
-  dta$Cohort == "OsteoLaus" | dta$DX_BMI <= 37, dta$L1L4sTBS, NA)
 
 # Comparison of the numeric variables - Table
 X <- names(dta)[sapply(dta, class) == "numeric"]
@@ -73,9 +92,9 @@ write_xlsx(tab_num, file.path(outdir, "comparisons_numeric_variables.xlsx"))
 pdf(file.path(outdir, "comparisons_numeric_variables.pdf"))
 for (x in names(dta)[sapply(dta, class) == "numeric"]) {
   subdta <- dta[dta$Subject_ID %in% ids(x), ]
-  p <- ggplot(subdta[c(x, "Cohort")], aes_string(x = "Cohort", y = x)) +
+  p <- ggplot(subdta[c(x, "Cohort")], aes(x = Cohort, y = !!sym(x))) +
     geom_boxplot() +
-    labs(x = "", caption = paste("n (per group):", nrow(subdta)))
+    labs(x = "", caption = paste("n (per group):", nrow(subdta) / 2))
   print(p)
 }
 dev.off()
@@ -109,4 +128,3 @@ write_xlsx(tab_bin, file.path(outdir, "comparisons_binary_variables.xlsx"))
 sink(file.path(outdir, "sessionInfo.txt"))
 print(sessionInfo(), locale = FALSE)
 sink()
-
