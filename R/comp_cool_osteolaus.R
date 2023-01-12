@@ -1,4 +1,8 @@
+library(broom)
+library(dplyr)
+library(emmeans)
 library(ggplot2)
+library(ggpubr)
 library(pander)
 library(parallel)
 library(readxl)
@@ -99,6 +103,70 @@ for (x in names(dta)[sapply(dta, class) == "numeric"]) {
 }
 dev.off()
 rm(p, x)
+
+# Adjusted comparisons of the numeric variables
+Y <- c("L1L4s_BMD", "L1L4sTBS", "femurTot_DMO", "col_DMO")
+X <- list("DepTabac", "TTT_Hormmenop", c("DepTabac", "TTT_Hormmenop"))
+adj_tab_num <- mclapply(setNames(Y, Y), function(y) {
+  R <- mclapply(X, function(x) {
+    subdta <- dta %>%
+      filter(Subject_ID %in% ids(y)) %>%
+      select(Cohort, any_of(c(x, y)))
+    if (any(is.na(subdta))) stop("missing value(s)")
+    fits <- lapply(1:2, function(k) {
+      fml <- as.formula(paste0(
+        y, "~", paste(c("Cohort", x), collapse = c("+", "*")[k])))
+      lm(fml, subdta)
+    })
+    tab <- lapply(fits, function(fit) {
+      tidy(fit, conf.int = TRUE) %>%
+        select(term, estimate, conf.low, conf.high, p.value)
+    }) %>%
+      {full_join(.[[1]], .[[2]], by = "term", suffix = c("", ".I"))}
+    na <- rep(NA, nrow(tab) - 1)
+    tab <- cbind(outcome = c(y, na),
+                 adjustment = c(paste(x, collapse = "/"), na), tab)
+    sttl <- paste("Adjusted for", paste(x, collapse = " and "))
+    d <- do.call(bind_rows, lapply(1:2, function(k) {
+      fit <- fits[[k]]
+      tidy(emmeans(fit, update(formula(fit), NULL ~ .))) %>%
+        mutate(inter = k)
+    })) %>%
+      mutate(inter = factor(inter, 1:2,
+        paste(c("without", "with"), "interaction")))
+    if (length(x) == 2) {
+      d$comp <- paste(d[[x[1]]], d[[x[2]]], sep = "/")
+      x <- paste(x[1], x[2], sep = "/")
+      names(d)[names(d) == "comp"] <- x
+    }
+    fig <- ggplot(d, aes(x = Cohort, y = estimate, color = !!sym(x),
+                         group = !!sym(x))) +
+      geom_point(position = position_dodge(width = .1)) +
+      geom_line(position = position_dodge(width = .1), linetype = "dashed") +
+      geom_errorbar(aes(ymin = estimate - std.error,
+                        ymax = estimate + std.error),
+                    position = position_dodge(width = .1), width = 0) +
+      facet_grid(cols = vars(inter)) +
+      labs(x = NULL, y = paste("Mean", y, "± SD"), subtitle = sttl) +
+      theme_bw() +
+      theme(legend.position = "bottom")
+    list(tab = tab, fig = fig)
+  })
+  tab <- do.call(bind_rows, lapply(R, function(r) r$tab))
+  fig <- ggarrange(plotlist = lapply(R, function(r) r$fig), ncol = 1) %>%
+    annotate_figure(top = text_grob(y, face = "bold", size = 14))
+  attr(tab, "fig") <- fig
+  return(tab)
+})
+write_xlsx(adj_tab_num,
+           file.path(outdir, "adjusted_comparisons_numeric_variables.xlsx"))
+rm(X, Y)
+
+# Adjusted comparisons of the numeric variables - Figures
+pdf(file.path(outdir, "adjusted_comparisons_numeric_variables.pdf"))
+for (z in adj_tab_num) print(attr(z, "fig"))
+dev.off()
+rm(z)
 
 # Comparison of the binary variables
 X <- names(dta)[sapply(dta, class) == "logical"]
